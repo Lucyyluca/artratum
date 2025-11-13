@@ -79,7 +79,11 @@
 ;; Check if user has required role
 (define-private (has-role (user principal) (required-role uint))
   (let ((user-role (default-to u0 (map-get? user-roles user))))
-    (>= user-role required-role)))
+    (if (is-eq required-role role-admin)
+      (is-eq user-role role-admin)
+      (if (is-eq required-role role-manager)
+        (or (is-eq user-role role-manager) (is-eq user-role role-admin))
+        false))))
 
 ;; Emergency controls
 (define-public (pause-contract)
@@ -230,7 +234,7 @@
     (err err-not-found)))
 
 ;; Enhanced withdraw with actual token transfer
-(define-public (withdraw (id uint))
+(define-public (withdraw (id uint) (token-interface <sip-010-trait>))
   (match (map-get? grants id)
     grant
       (begin
@@ -240,7 +244,11 @@
         (match (withdrawable id)
           amount
             (if (> amount u0)
-              (let ((token-contract-principal (get token-contract grant)))
+              (let ((token-contract-principal (get token-contract grant))
+                    (interface-principal (contract-of token-interface)))
+                (asserts! (or (is-eq token-contract-principal contract-owner)
+                              (is-eq token-contract-principal interface-principal))
+                          (err err-invalid-token))
                 ;; For legacy grants without token integration, just update the record
                 (if (is-eq token-contract-principal contract-owner)
                   (begin
@@ -248,12 +256,18 @@
                     (ok amount))
                   ;; For token-integrated grants, perform actual transfer
                   (begin
-                    ;; Update grant withdrawn amount first
-                    (map-set grants id (merge grant { withdrawn: (+ (get withdrawn grant) amount) }))
-                    ;; Update locked balance tracking
-                    (map-set locked-balances token-contract-principal
-                      (- (default-to u0 (map-get? locked-balances token-contract-principal)) amount))
-                    (ok amount))))
+                    (match (contract-call? token-interface transfer amount (as-contract tx-sender) (get recipient grant) none)
+                      transfer-success
+                        (if transfer-success
+                          (begin
+                            ;; Update grant withdrawn amount first
+                            (map-set grants id (merge grant { withdrawn: (+ (get withdrawn grant) amount) }))
+                            ;; Update locked balance tracking
+                            (map-set locked-balances token-contract-principal
+                              (- (default-to u0 (map-get? locked-balances token-contract-principal)) amount))
+                            (ok amount))
+                          (err err-token-transfer))
+                      error (err err-token-transfer)))))
               (err err-no-withdrawable))
           error (err error)))
     (err err-not-found)))
