@@ -12,6 +12,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "types": ["node", "vitest"],
 
     "strict": true,
     "noImplicitAny": true,
